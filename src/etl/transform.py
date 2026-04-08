@@ -1,8 +1,13 @@
+import sys
+from helpers import setup_paths
+
+setup_paths()
+
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 from sqlalchemy import create_engine
-from config.config import DATABASE_URL
+from config import DATABASE_URL
 import traceback
 
 
