@@ -1,7 +1,13 @@
+import sys
+import os
+from helpers import setup_paths
+
+setup_paths()
+
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
-from config.config import DATABASE_URL, DATA_RAW_PATH
+from config import DATABASE_URL, DATA_RAW_PATH
 import os
 import glob
 import traceback
