@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: rfm_postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-rfm_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-rfm_password}
+      POSTGRES_DB: ${DB_NAME:-rfm_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER:-rfm_user} -d ${DB_NAME:-rfm_db}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:

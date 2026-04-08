@@ -1,0 +1,83 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: rfm_postgres
+    environment:
+      POSTGRES_USER: ${DB_USER:-rfm_user}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-rfm_password}
+      POSTGRES_DB: ${DB_NAME:-rfm_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER:-rfm_user} -d ${DB_NAME:-rfm_db}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: rfm_airflow_webserver
+    environment:
+      - AIRFLOW_HOME=/airflow
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__UNITS_TEST_MODE=False
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER:-rfm_user}:${DB_PASSWORD:-rfm_password}@postgres:5432/${DB_NAME:-rfm_db}
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-rfm_db}
+      - DB_USER=${DB_USER:-rfm_user}
+      - DB_PASSWORD=${DB_PASSWORD:-rfm_password}
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./src/dags:/airflow/dags
+      - ./src/etl:/airflow/etl
+      - ./data:/airflow/data
+      - ./config:/airflow/config
+      - ./airflow/logs:/airflow/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: bash -c "airflow db init && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com 2>/dev/null || true && airflow webserver"
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: rfm_airflow_scheduler
+    environment:
+      - AIRFLOW_HOME=/airflow
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+      - AIRFLOW__CORE__UNITS_TEST_MODE=False
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER:-rfm_user}:${DB_PASSWORD:-rfm_password}@postgres:5432/${DB_NAME:-rfm_db}
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=${DB_NAME:-rfm_db}
+      - DB_USER=${DB_USER:-rfm_user}
+      - DB_PASSWORD=${DB_PASSWORD:-rfm_password}
+    volumes:
+      - ./src/dags:/airflow/dags
+      - ./src/etl:/airflow/etl
+      - ./data:/airflow/data
+      - ./config:/airflow/config
+      - ./airflow/logs:/airflow/logs
+    depends_on:
+      airflow-webserver:
+        condition: service_healthy
+    command: airflow scheduler
+
+volumes:
+  postgres_data:
