@@ -1,25 +1,21 @@
-"""
-Script d'ingestion - Charge les données brutes CSV dans PostgreSQL
-"""
-
 import pandas as pd
 import psycopg2
-from psycopg2.extras import execute_values  # Outil pour l'insertion rapide en lot
+from psycopg2.extras import execute_values
 from config.config import DATABASE_URL, DATA_RAW_PATH
 import os
 import glob
+import traceback
 
 
-def create_raw_table(conn):
-    """Crée la table brute dans PostgreSQL"""
+def create_raw_table(conn, truncate=True):
+    """Crée la table brute et la vide si demandé"""
     cursor = conn.cursor()
-
     create_table_query = """
     CREATE TABLE IF NOT EXISTS raw_orders (
         transaction_id SERIAL PRIMARY KEY,
         invoice VARCHAR(50),
         stock_code VARCHAR(50),
-        description VARCHAR(255),
+        description VARCHAR(500),
         quantity INT,
         invoice_date TIMESTAMP,
         price NUMERIC,
@@ -27,78 +23,74 @@ def create_raw_table(conn):
         country VARCHAR(100)
     );
     """
-
     try:
         cursor.execute(create_table_query)
+        if truncate:
+            cursor.execute("TRUNCATE TABLE raw_orders RESTART IDENTITY;")
+            print("⟳ Table raw_orders vidée (Truncate + Restart Identity)")
         conn.commit()
         print("✅ Table raw_orders prête")
     except Exception as e:
-        print(f"⚠️ Erreur lors de la création de la table : {e}")
+        print(f"⚠️ Erreur création/truncate table : {e}")
+        traceback.print_exc()
         conn.rollback()
     finally:
         cursor.close()
 
 
 def ingest_data():
-    """Ingère les données depuis les fichiers CSV vers PostgreSQL"""
-
-    # 1. Trouver tous les fichiers CSV dans le dossier
+    # 1. Trouver et TRIER les fichiers
     csv_pattern = os.path.join(DATA_RAW_PATH, "*.csv")
-    csv_files = glob.glob(csv_pattern)
+    csv_files = sorted(glob.glob(csv_pattern))
 
     if not csv_files:
         print(f"❌ Aucun fichier CSV trouvé dans : {DATA_RAW_PATH}")
         return False
 
-    print(f"📂 {len(csv_files)} fichier(s) CSV trouvé(s).")
+    print(f"📂 {len(csv_files)} fichier(s) trouvé(s).")
 
-    # 2. Lire et combiner les fichiers
+    # 2. Lecture et nettoyage
     dataframes = []
     for file in csv_files:
-        print(f"   Lecture de : {os.path.basename(file)}")
         try:
-            # Encodage défini sur UTF-8 selon votre format
+            # On utilise les noms de colonnes exacts du CSV
             df_temp = pd.read_csv(file, sep=";", encoding="utf-8", decimal=",")
             dataframes.append(df_temp)
         except Exception as e:
-            print(f"❌ Erreur de lecture sur {file} : {e}")
+            print(f"❌ Erreur lecture {file} : {e}")
             return False
 
-    # Fusionner tous les tableaux en un seul
     df = pd.concat(dataframes, ignore_index=True)
 
-    # Forcer la conversion de la colonne Price en numérique (sécurité)
+    # Nettoyage Price
     if df["Price"].dtype == object:
         df["Price"] = df["Price"].astype(str).str.replace(",", ".").astype(float)
 
-    # Convertir proprement la date au format PostgreSQL (Année-Mois-Jour)
+    # Nettoyage Date
     df["InvoiceDate"] = pd.to_datetime(
         df["InvoiceDate"], format="%d/%m/%Y %H:%M", errors="coerce"
     )
 
-    # Forcer le tableau en type 'object' pour que Pandas accepte les vrais 'None'
-    # (Évite l'erreur 'integer out of range' avec les identifiants clients manquants)
+    # Conversion en types natifs Python pour PostgreSQL (gère les NaN -> None)
     df = df.astype(object).where(pd.notnull(df), None)
 
-    print(f"📊 Données combinées : {len(df)} lignes prêtes pour l'ingestion.")
-
-    # 3. Connexion et Ingestion
+    # 3. Ingestion
     try:
         conn = psycopg2.connect(DATABASE_URL)
-        create_raw_table(conn)
+
+        # On passe explicitement le truncate
+        create_raw_table(conn, truncate=True)
+
         cursor = conn.cursor()
 
-        print("⏳ Insertion en base en cours (Batch)...")
-
-        # Préparer la requête
         insert_query = """
         INSERT INTO raw_orders (invoice, stock_code, description, quantity, 
                                invoice_date, price, customer_id, country)
         VALUES %s
         """
 
-        # Convertir le DataFrame en une liste de tuples
-        columns_to_extract = [
+        # Mapping exact entre colonnes DataFrame et colonnes Table
+        columns = [
             "Invoice",
             "StockCode",
             "Description",
@@ -108,21 +100,27 @@ def ingest_data():
             "Customer ID",
             "Country",
         ]
-        values = [tuple(x) for x in df[columns_to_extract].to_numpy()]
 
-        # Exécuter l'insertion rapide
+        values = [tuple(x) for x in df[columns].to_numpy()]
+
+        print(f"⏳ Insertion de {len(values)} lignes...")
         execute_values(cursor, insert_query, values)
 
         conn.commit()
-        cursor.close()
-        conn.close()
+        cursor.close()  # Bonne pratique : fermer le curseur dès qu'on a fini
 
-        print(f"✅ Succès : {len(df)} lignes insérées dans PostgreSQL !")
+        print(f"✅ Succès : {len(df)} lignes insérées !")
         return True
 
     except Exception as e:
-        print(f"❌ Erreur lors de l'insertion en base : {e}")
+        print(f"❌ Erreur lors de l'insertion : {e}")
+        traceback.print_exc()
+        if "conn" in locals():
+            conn.rollback()
         return False
+    finally:
+        if "conn" in locals():
+            conn.close()
 
 
 if __name__ == "__main__":
