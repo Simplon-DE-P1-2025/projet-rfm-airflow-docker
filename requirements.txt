@@ -6,3 +6,5 @@ python-dotenv
 sqlalchemy
 requests
 openpyxl
+streamlit
+plotly

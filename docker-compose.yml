@@ -16,8 +16,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # NOUVEAU SERVICE : Gère l'initialisation de la base Airflow (tourne 1 seule fois puis s'éteint)
-  # NOUVEAU SERVICE : Gère l'initialisation de la base Airflow (tourne 1 seule fois puis s'éteint) [cite: 5, 10, 31]
   airflow-init:
     build:
       context: .
@@ -121,6 +119,25 @@ services:
       - "5050:80"
     volumes:
       - ./servers.json:/pgadmin4/servers.json:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  streamlit:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: rfm_streamlit
+    entrypoint: []
+    ports:
+      - "8501:8501"
+    environment:
+      - DB_URL=postgresql://rfm_user:rfm_password@postgres:5432/rfm_db
+    volumes:
+      - ./src/app:/app
+    working_dir: /app
+    command: >
+      bash -c "python3 -m streamlit run main.py --server.port 8501 --server.address 0.0.0.0"
     depends_on:
       postgres:
         condition: service_healthy
