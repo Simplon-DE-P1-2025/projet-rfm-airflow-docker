@@ -28,7 +28,9 @@ def create_raw_table(conn):
         invoice_date TIMESTAMP,
         price NUMERIC,
         customer_id INT,
-        country VARCHAR(100)
+        country VARCHAR(100),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """
     try:

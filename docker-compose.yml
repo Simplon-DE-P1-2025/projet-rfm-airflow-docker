@@ -58,6 +58,7 @@ services:
       - airflow_home:/airflow
       - ./src/dags:/airflow/dags
       - ./src/etl:/airflow/etl
+      - ./src/analysis:/airflow/analysis
       - ./data:/airflow/data
       - ./config:/airflow/config
       - ./airflow/logs:/airflow/logs
@@ -96,6 +97,7 @@ services:
       - airflow_home:/airflow
       - ./src/dags:/airflow/dags
       - ./src/etl:/airflow/etl
+      - ./src/analysis:/airflow/analysis
       - ./data:/airflow/data
       - ./config:/airflow/config
       - ./airflow/logs:/airflow/logs

@@ -1,5 +1,6 @@
 """
 Module d'aide pour les imports - Support Docker et développement local
+Copie dans analysis/ pour importer config et etl/analysis modules
 """
 
 import sys
@@ -12,7 +13,7 @@ def setup_paths():
     # Chemins possibles pour config
     config_paths = [
         "/airflow/config",  # Docker
-        os.path.join(os.path.dirname(__file__), "..", "config"),  # Depuis etl/
+        os.path.join(os.path.dirname(__file__), "..", "config"),  # Depuis analysis/
         os.path.join(os.path.dirname(__file__), "config"),  # Depuis racine
     ]
 
@@ -20,8 +21,8 @@ def setup_paths():
     module_paths = [
         "/airflow/etl",  # Docker - ETL core scripts
         "/airflow/analysis",  # Docker - Advanced analytics scripts
-        os.path.dirname(__file__),  # Répertoire courant (etl/)
-        os.path.join(os.path.dirname(__file__), "..", "analysis"),  # analysis/ sibling
+        os.path.dirname(__file__),  # Répertoire courant (analysis/)
+        os.path.join(os.path.dirname(__file__), "..", "etl"),  # etl/ sibling
     ]
 
     # Ajouter les chemins

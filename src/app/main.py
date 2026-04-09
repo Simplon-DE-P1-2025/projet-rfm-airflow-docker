@@ -58,6 +58,12 @@ def load_rfm_data():
         return pd.DataFrame()
 
 
+if st.sidebar.button("🔄 Actualiser les données"):
+    """Bouton pour forcer le rechargement des données cachées."""
+    st.cache_data.clear()
+    st.rerun()
+
+
 @st.cache_data(ttl=300)
 def load_raw_stats():
     """Charge les statistiques des données brutes."""
@@ -96,6 +102,66 @@ def load_raw_stats():
     except Exception as e:
         st.error(f"Erreur chargement stats: {e}")
         return {}
+
+
+@st.cache_data(ttl=300)
+def load_product_rfm():
+    """Charge l'analyse RFM produits."""
+    try:
+        engine = create_engine(DATABASE_URL)
+        df = pd.read_sql(
+            "SELECT * FROM product_rfm ORDER BY monetary DESC",
+            engine,
+        )
+        engine.dispose()
+        return df if not df.empty else pd.DataFrame()
+    except Exception as e:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_churn_data():
+    """Charge les données de churn prediction."""
+    try:
+        engine = create_engine(DATABASE_URL)
+        df = pd.read_sql(
+            "SELECT * FROM churn_risk ORDER BY churn_score DESC",
+            engine,
+        )
+        engine.dispose()
+        return df if not df.empty else pd.DataFrame()
+    except Exception as e:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_geographic_data():
+    """Charge l'analyse géographique."""
+    try:
+        engine = create_engine(DATABASE_URL)
+        df = pd.read_sql(
+            "SELECT * FROM geographic_analysis ORDER BY priority_rank",
+            engine,
+        )
+        engine.dispose()
+        return df if not df.empty else pd.DataFrame()
+    except Exception as e:
+        return pd.DataFrame()
+
+
+@st.cache_data(ttl=300)
+def load_clv_data():
+    """Charge les prévisions CLV."""
+    try:
+        engine = create_engine(DATABASE_URL)
+        df = pd.read_sql(
+            "SELECT * FROM clv_forecast ORDER BY clv_24months DESC",
+            engine,
+        )
+        engine.dispose()
+        return df if not df.empty else pd.DataFrame()
+    except Exception as e:
+        return pd.DataFrame()
 
 
 SEGMENT_COLORS = {
@@ -284,8 +350,14 @@ df_filtered = df_rfm[
 # ══════════════════════════════════════════════
 # TAB LAYOUT
 # ══════════════════════════════════════════════
-tab1, tab2, tab3, tab4 = st.tabs(
-    ["📈 Vue d'ensemble", "🎯 Segmentation RFM", "🔍 Analyse détaillée", "📋 Données"]
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [
+        "📈 Vue d'ensemble",
+        "🎯 Segmentation RFM",
+        "🔍 Analyse détaillée",
+        "📋 Données",
+        "🚀 Advanced Analytics",
+    ]
 )
 
 # ──────────────────────────────────────────────
@@ -669,6 +741,303 @@ with tab4:
         )
     else:
         st.info("📭 Aucune donnée après filtrage")
+
+# ──────────────────────────────────────────────
+# TAB 5 : Advanced Analytics
+# ──────────────────────────────────────────────
+with tab5:
+    st.markdown("## 🚀 Advanced Analytics — 4 Modules Avancés")
+    st.markdown("Analyses approfondies: Produits, Churn, Géographie, CLV Forecast")
+    st.markdown("---")
+
+    # Sub-tabs pour chaque module
+    sub_tab1, sub_tab2, sub_tab3, sub_tab4 = st.tabs(
+        ["🏆 Produits RFM", "🚨 Churn Risk", "🌍 Géographie", "💰 CLV Forecast"]
+    )
+
+    # ─────────────────────────────────────────────
+    # SUB-TAB 1 : Product RFM
+    # ─────────────────────────────────────────────
+    with sub_tab1:
+        st.markdown("### Analyse RFM au Niveau Produit")
+        df_products = load_product_rfm()
+
+        if not df_products.empty:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                n_stars = len(df_products[df_products["performance"] == "Star"])
+                st.metric("⭐ Produits Stars", f"{n_stars}")
+            with col2:
+                n_orphans = len(df_products[df_products["performance"] == "Orphan"])
+                st.metric("💀 Produits Orphelins", f"{n_orphans}")
+            with col3:
+                total_products = len(df_products)
+                st.metric("📦 Total Produits", f"{total_products}")
+
+            st.markdown("---")
+
+            col_left, col_right = st.columns(2)
+            with col_left:
+                st.markdown("### Distribution par Performance")
+                perf_counts = df_products["performance"].value_counts().reset_index()
+                perf_counts.columns = ["performance", "count"]
+                fig_perf = px.pie(
+                    perf_counts,
+                    values="count",
+                    names="performance",
+                    color_discrete_sequence=[
+                        "#2ecc71",
+                        "#3498db",
+                        "#f39c12",
+                        "#95a5a6",
+                    ],
+                    hole=0.4,
+                )
+                fig_perf.update_layout(height=400, paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_perf, use_container_width=True)
+
+            with col_right:
+                st.markdown("### Top 10 par Revenue")
+                df_top_products = df_products.nlargest(10, "monetary")
+                fig_prod = px.bar(
+                    df_top_products,
+                    x="monetary",
+                    y="stock_code",
+                    orientation="h",
+                    color="performance",
+                    color_discrete_map={
+                        "Star": "#2ecc71",
+                        "Strong": "#3498db",
+                        "Stable": "#f39c12",
+                        "Orphan": "#95a5a6",
+                    },
+                )
+                fig_prod.update_layout(
+                    height=400, showlegend=False, paper_bgcolor="rgba(0,0,0,0)"
+                )
+                st.plotly_chart(fig_prod, use_container_width=True)
+
+            st.markdown("---")
+            st.dataframe(
+                df_products[
+                    [
+                        "stock_code",
+                        "product_name",
+                        "performance",
+                        "total_customers",
+                        "monetary",
+                    ]
+                ],
+                use_container_width=True,
+                height=400,
+            )
+        else:
+            st.info("📭 Pas de données. Lancez le DAG pour générer l'analyse.")
+
+    # ─────────────────────────────────────────────
+    # SUB-TAB 2 : Churn Prediction
+    # ─────────────────────────────────────────────
+    with sub_tab2:
+        st.markdown("### Prédiction de Churn")
+        df_churn = load_churn_data()
+
+        if not df_churn.empty:
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                n_high = len(df_churn[df_churn["churn_score"].astype(float) >= 80])
+                st.metric("🔴 Haut Risque", f"{n_high}")
+            with col2:
+                n_medium = len(
+                    df_churn[
+                        (df_churn["churn_score"].astype(float) >= 60)
+                        & (df_churn["churn_score"].astype(float) < 80)
+                    ]
+                )
+                st.metric("🟠 Moyen", f"{n_medium}")
+            with col3:
+                n_low = len(
+                    df_churn[
+                        (df_churn["churn_score"].astype(float) >= 40)
+                        & (df_churn["churn_score"].astype(float) < 60)
+                    ]
+                )
+                st.metric("🟡 Faible", f"{n_low}")
+            with col4:
+                n_vlow = len(df_churn[df_churn["churn_score"].astype(float) < 40])
+                st.metric("🟢 Très Faible", f"{n_vlow}")
+
+            st.markdown("---")
+            fig_hist = px.histogram(
+                df_churn,
+                x="churn_score",
+                nbins=30,
+                color_discrete_sequence=["#e74c3c"],
+            )
+            fig_hist.update_layout(height=400, paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_hist, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("### 🚨 Haut Risque (Top 50)")
+            df_high = df_churn[df_churn["churn_score"].astype(float) >= 80].head(50)
+            st.dataframe(
+                df_high[
+                    [
+                        "customer_id",
+                        "churn_score",
+                        "recency",
+                        "frequency",
+                        "recommendation",
+                    ]
+                ],
+                use_container_width=True,
+                height=400,
+            )
+            if len(df_high) > 0:
+                st.download_button(
+                    "⬇️ Télécharger",
+                    df_high.to_csv(index=False),
+                    "churn_high_risk.csv",
+                    "text/csv",
+                )
+        else:
+            st.info("📭 Pas de données. Lancez le DAG pour générer l'analyse.")
+
+    # ─────────────────────────────────────────────
+    # SUB-TAB 3 : Geographic Analysis
+    # ─────────────────────────────────────────────
+    with sub_tab3:
+        st.markdown("### Analyse Géographique")
+        df_geo = load_geographic_data()
+
+        if not df_geo.empty:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                n_est = len(
+                    df_geo[
+                        df_geo["market_growth_potential"].str.contains("Established")
+                    ]
+                )
+                st.metric("🟢 Établis", f"{n_est}")
+            with col2:
+                n_grow = len(
+                    df_geo[df_geo["market_growth_potential"].str.contains("Growing")]
+                )
+                st.metric("📈 Croissance", f"{n_grow}")
+            with col3:
+                n_emerg = len(
+                    df_geo[df_geo["market_growth_potential"].str.contains("Emerging")]
+                )
+                st.metric("🚀 Émergents", f"{n_emerg}")
+
+            st.markdown("---")
+            fig_geo = px.scatter(
+                df_geo.head(10),
+                x="total_customers",
+                y="total_revenue",
+                size="avg_customer_value",
+                hover_name="country",
+                color="market_growth_potential",
+                color_discrete_map={
+                    "🟢 Established Leader": "#2ecc71",
+                    "🟠 Declining": "#e74c3c",
+                    "🟡 Growing Opportunity": "#f39c12",
+                    "🔴 Emerging Market": "#e67e22",
+                },
+            )
+            fig_geo.update_layout(height=400, paper_bgcolor="rgba(0,0,0,0)")
+            st.plotly_chart(fig_geo, use_container_width=True)
+
+            st.markdown("---")
+            st.dataframe(
+                df_geo[
+                    [
+                        "priority_rank",
+                        "country",
+                        "total_customers",
+                        "total_revenue",
+                        "market_growth_potential",
+                    ]
+                ],
+                use_container_width=True,
+                height=400,
+            )
+        else:
+            st.info("📭 Pas de données. Lancez le DAG pour générer l'analyse.")
+
+    # ─────────────────────────────────────────────
+    # SUB-TAB 4 : CLV Forecast
+    # ─────────────────────────────────────────────
+    with sub_tab4:
+        st.markdown("### Prévision CLV (12-24 mois)")
+        df_clv = load_clv_data()
+
+        if not df_clv.empty:
+            total_clv_12 = df_clv["clv_12months"].sum()
+            total_clv_24 = df_clv["clv_24months"].sum()
+            avg_clv = df_clv["clv_12months"].mean()
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("💰 12 Mois", f"€{total_clv_12:,.0f}")
+            with col2:
+                st.metric("💰 24 Mois", f"€{total_clv_24:,.0f}")
+            with col3:
+                n_conf = len(df_clv[df_clv["forecast_confidence"] == "🟢 High"])
+                st.metric("✅ Haute Confiance", f"{n_conf}")
+
+            st.markdown("---")
+            df_seg = (
+                df_clv.groupby("segment")
+                .agg(
+                    {
+                        "customer_id": "count",
+                        "clv_12months": "sum",
+                        "clv_24months": "sum",
+                    }
+                )
+                .reset_index()
+            )
+            df_seg.columns = ["segment", "customers", "clv_12m", "clv_24m"]
+
+            fig_clv = px.bar(
+                df_seg,
+                x="segment",
+                y=["clv_12m", "clv_24m"],
+                barmode="group",
+                color_discrete_map={
+                    "clv_12m": "#3498db",
+                    "clv_24m": "#2ecc71",
+                },
+            )
+            fig_clv.update_layout(
+                height=400, paper_bgcolor="rgba(0,0,0,0)", showlegend=False
+            )
+            st.plotly_chart(fig_clv, use_container_width=True)
+
+            st.markdown("---")
+            st.markdown("### Top 30 Clients")
+            df_top_clv = df_clv.nlargest(30, "clv_24months")
+            st.dataframe(
+                df_top_clv[
+                    [
+                        "customer_id",
+                        "segment",
+                        "historical_value",
+                        "clv_12months",
+                        "clv_24months",
+                    ]
+                ],
+                use_container_width=True,
+                height=400,
+            )
+            st.download_button(
+                "⬇️ Télécharger",
+                df_top_clv.to_csv(index=False),
+                "clv_forecast.csv",
+                "text/csv",
+            )
+        else:
+            st.info("📭 Pas de données. Lancez le DAG pour générer l'analyse.")
 
 # ──────────────────────────────────────────────
 # Footer

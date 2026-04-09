@@ -21,8 +21,9 @@ def transform_rfm(truncate=True):
         cursor = conn.cursor()
 
         if truncate:
-            cursor.execute("DROP TABLE IF EXISTS rfm_analysis;")
-            print("🗑️ Table rfm_analysis supprimée.")
+            cursor.execute("DROP TABLE IF EXISTS rfm_analysis CASCADE;")
+            cursor.execute("DROP TYPE IF EXISTS rfm_analysis CASCADE;")
+            print("🗑️ Table et Type rfm_analysis supprimés.")
 
         cursor.execute(
             """
@@ -35,7 +36,9 @@ def transform_rfm(truncate=True):
                 f_score INT,
                 m_score INT,
                 rfm_score VARCHAR(10),
-                segment VARCHAR(50)
+                segment VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             """
         )
@@ -75,30 +78,23 @@ def transform_rfm(truncate=True):
         )
         rfm.columns = ["customer_id", "recency", "frequency", "monetary"]
 
-        # Nettoyage des montants négatifs ou nuls
         rfm = rfm[rfm["monetary"] > 0].copy()
 
-        # 4. SCORING RFM (Nouveau !)
         print("🎯 Attribution des scores de 1 à 5...")
 
-        # Récence : plus c'est bas, mieux c'est (5 = très récent, 1 = très ancien)
         rfm["r_score"] = pd.qcut(rfm["recency"], 5, labels=[5, 4, 3, 2, 1]).astype(int)
 
-        # Fréquence & Montant : plus c'est haut, mieux c'est (5 = très élevé, 1 = très faible)
-        # On utilise rank(method='first') pour gérer les doublons (ex: beaucoup de clients avec 1 seul achat)
         rfm["f_score"] = pd.qcut(
             rfm["frequency"].rank(method="first"), 5, labels=[1, 2, 3, 4, 5]
         ).astype(int)
         rfm["m_score"] = pd.qcut(rfm["monetary"], 5, labels=[1, 2, 3, 4, 5]).astype(int)
 
-        # Création du score global sous forme de chaîne (ex: "555" pour le meilleur client)
         rfm["rfm_score"] = (
             rfm["r_score"].astype(str)
             + rfm["f_score"].astype(str)
             + rfm["m_score"].astype(str)
         )
 
-        # 5. Attribution des segments avant insertion
         def assign_segment(row):
             """Assigne un segment marketing basé sur les scores RFM."""
             r = row["r_score"]
@@ -123,7 +119,6 @@ def transform_rfm(truncate=True):
 
         rfm["segment"] = rfm.apply(assign_segment, axis=1)
 
-        # 6. Insertion dans la table intermédiaire rfm_analysis
         print(f"⏳ Insertion de {len(rfm)} profils clients dans rfm_analysis...")
         insert_query = """
             INSERT INTO rfm_analysis (customer_id, recency, frequency, monetary, r_score, f_score, m_score, rfm_score, segment)
@@ -136,7 +131,8 @@ def transform_rfm(truncate=True):
                 f_score = EXCLUDED.f_score,
                 m_score = EXCLUDED.m_score,
                 rfm_score = EXCLUDED.rfm_score,
-                segment = EXCLUDED.segment;
+                segment = EXCLUDED.segment,
+                updated_at = CURRENT_TIMESTAMP;
         """
         values_analysis = (
             rfm[

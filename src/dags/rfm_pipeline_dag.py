@@ -9,13 +9,15 @@ from airflow.operators.python import PythonOperator
 import sys
 import os
 
-# Ajouter les chemins pour importer les scripts ETL
-etl_paths = [
-    "/airflow/etl",  # Docker
-    os.path.join(os.path.dirname(__file__), "..", "etl"),  # Local
+# Ajouter les chemins pour importer les scripts ETL et Analysis
+module_paths = [
+    "/airflow/etl",  # Docker - ETL core scripts
+    "/airflow/analysis",  # Docker - Advanced analytics scripts
+    os.path.join(os.path.dirname(__file__), "..", "etl"),  # Local - etl/
+    os.path.join(os.path.dirname(__file__), "..", "analysis"),  # Local - analysis/
 ]
 
-for path in etl_paths:
+for path in module_paths:
     if os.path.exists(path) and path not in sys.path:
         sys.path.insert(0, path)
 
@@ -28,6 +30,10 @@ try:
     from ingest import ingest_data
     from transform import transform_rfm
     from load import load_rfm_results
+    from product_rfm import product_rfm_analysis
+    from churn_prediction import churn_prediction
+    from geographic_analysis import geographic_analysis
+    from clv_forecast import clv_forecast
 except ImportError as e:
     print(f"⚠️ Erreur d'import : {e}")
     raise
@@ -69,5 +75,37 @@ with DAG(
         doc="Charge les résultats RFM dans PostgreSQL (table rfm_results)",
     )
 
+    # ─────────────────────────────────────────────────────────
+    # Tâches Avancées (Priority 3) - Exécutées en parallèle
+    # ─────────────────────────────────────────────────────────
+    task_product = PythonOperator(
+        task_id="product_rfm_analysis",
+        python_callable=product_rfm_analysis,
+        doc="Analyse RFM au niveau produit (Stars vs Orphelins)",
+    )
+
+    task_churn = PythonOperator(
+        task_id="churn_prediction",
+        python_callable=churn_prediction,
+        doc="Prédiction de churn (0-100 score) avec recommendations",
+    )
+
+    task_geo = PythonOperator(
+        task_id="geographic_analysis",
+        python_callable=geographic_analysis,
+        doc="Analyse géographique (opportunités expansion par pays)",
+    )
+
+    task_clv = PythonOperator(
+        task_id="clv_forecast",
+        python_callable=clv_forecast,
+        doc="Prévision CLV 12-24 mois par client/segment",
+    )
+
     # Définir les dépendances
-    task_ingest >> task_transform >> task_load
+    (
+        task_ingest
+        >> task_transform
+        >> task_load
+        >> [task_product, task_churn, task_geo, task_clv]
+    )
