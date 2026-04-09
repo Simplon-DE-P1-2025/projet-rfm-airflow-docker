@@ -34,69 +34,68 @@ DATABASE_URL = f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NA
 
 @st.cache_data(ttl=300)
 def load_rfm_data():
-    """Charge les données RFM depuis PostgreSQL."""
-    engine = create_engine(DATABASE_URL)
-    query = "SELECT * FROM rfm_analysis"
-    df = pd.read_sql(query, engine)
-    engine.dispose()
-    return df
+    """Charge les données RFM avec scores depuis PostgreSQL."""
+    try:
+        engine = create_engine(DATABASE_URL)
+        query = """
+            SELECT customer_id, recency, frequency, monetary, 
+                   r_score, f_score, m_score, rfm_score, segment 
+            FROM rfm_analysis
+            ORDER BY monetary DESC
+        """
+        df = pd.read_sql(query, engine)
+
+        # Conversion des types pour assurer la compatibilité
+        df["r_score"] = df["r_score"].astype(int)
+        df["f_score"] = df["f_score"].astype(int)
+        df["m_score"] = df["m_score"].astype(int)
+        df["monetary"] = df["monetary"].astype(float)
+
+        engine.dispose()
+        return df
+    except Exception as e:
+        st.error(f"Erreur chargement RFM: {e}")
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=300)
 def load_raw_stats():
     """Charge les statistiques des données brutes."""
-    engine = create_engine(DATABASE_URL)
-    stats = {}
-    stats["total_orders"] = pd.read_sql(
-        "SELECT COUNT(DISTINCT invoice) AS cnt FROM raw_orders", engine
-    )["cnt"].iloc[0]
-    stats["total_customers"] = pd.read_sql(
-        "SELECT COUNT(DISTINCT customer_id) AS cnt FROM raw_orders WHERE customer_id IS NOT NULL",
-        engine,
-    )["cnt"].iloc[0]
-    stats["total_revenue"] = pd.read_sql(
-        "SELECT SUM(price * quantity) AS total FROM raw_orders WHERE quantity > 0",
-        engine,
-    )["total"].iloc[0]
-    stats["total_products"] = pd.read_sql(
-        "SELECT COUNT(DISTINCT stock_code) AS cnt FROM raw_orders", engine
-    )["cnt"].iloc[0]
-    stats["top_countries"] = pd.read_sql(
-        """SELECT country, COUNT(DISTINCT customer_id) AS nb_clients
-           FROM raw_orders WHERE customer_id IS NOT NULL
-           GROUP BY country ORDER BY nb_clients DESC LIMIT 10""",
-        engine,
-    )
-    stats["monthly_revenue"] = pd.read_sql(
-        """SELECT DATE_TRUNC('month', invoice_date) AS mois,
-                  SUM(price * quantity) AS revenue
-           FROM raw_orders WHERE quantity > 0
-           GROUP BY mois ORDER BY mois""",
-        engine,
-    )
-    engine.dispose()
-    return stats
-
-
-def assign_segment(row):
-    """Attribue un segment marketing basé sur les scores RFM."""
-    r, f, m = int(row["r_score"]), int(row["f_score"]), int(row["m_score"])
-    if r >= 4 and f >= 4 and m >= 4:
-        return "Champions"
-    elif r >= 3 and f >= 3 and m >= 3:
-        return "Clients Fidèles"
-    elif r >= 4 and f <= 2:
-        return "Nouveaux Clients"
-    elif r >= 3 and f >= 1 and m >= 2:
-        return "Clients Potentiels"
-    elif r <= 2 and f >= 3:
-        return "À Risque"
-    elif r <= 2 and f <= 2 and m <= 2:
-        return "Perdus"
-    elif r <= 2 and f <= 2 and m >= 3:
-        return "À Réactiver"
-    else:
-        return "Moyens"
+    try:
+        engine = create_engine(DATABASE_URL)
+        stats = {}
+        stats["total_orders"] = pd.read_sql(
+            "SELECT COUNT(DISTINCT invoice) AS cnt FROM raw_orders", engine
+        )["cnt"].iloc[0]
+        stats["total_customers"] = pd.read_sql(
+            "SELECT COUNT(DISTINCT customer_id) AS cnt FROM raw_orders WHERE customer_id IS NOT NULL",
+            engine,
+        )["cnt"].iloc[0]
+        stats["total_revenue"] = pd.read_sql(
+            "SELECT SUM(price * quantity) AS total FROM raw_orders WHERE quantity > 0",
+            engine,
+        )["total"].iloc[0]
+        stats["total_products"] = pd.read_sql(
+            "SELECT COUNT(DISTINCT stock_code) AS cnt FROM raw_orders", engine
+        )["cnt"].iloc[0]
+        stats["top_countries"] = pd.read_sql(
+            """SELECT country, COUNT(DISTINCT customer_id) AS nb_clients
+               FROM raw_orders WHERE customer_id IS NOT NULL
+               GROUP BY country ORDER BY nb_clients DESC LIMIT 10""",
+            engine,
+        )
+        stats["monthly_revenue"] = pd.read_sql(
+            """SELECT DATE_TRUNC('month', invoice_date) AS mois,
+                      SUM(price * quantity) AS revenue
+               FROM raw_orders WHERE quantity > 0
+               GROUP BY mois ORDER BY mois""",
+            engine,
+        )
+        engine.dispose()
+        return stats
+    except Exception as e:
+        st.error(f"Erreur chargement stats: {e}")
+        return {}
 
 
 SEGMENT_COLORS = {
@@ -116,6 +115,8 @@ SEGMENT_COLORS = {
 # ──────────────────────────────────────────────
 try:
     df_rfm = load_rfm_data()
+    if df_rfm.empty:
+        raise ValueError("Aucune donnée RFM trouvée")
     raw_stats = load_raw_stats()
     data_loaded = True
 except Exception as e:
@@ -138,25 +139,29 @@ st.markdown(
 
 if not data_loaded:
     st.error(
-        f"Impossible de charger les données depuis PostgreSQL.\n\n**Erreur :** {error_msg}\n\n"
+        f"❌ Impossible de charger les données depuis PostgreSQL.\n\n**Erreur :** {error_msg}\n\n"
         "Assurez-vous que le DAG Airflow `rfm_pipeline` a été exécuté avec succès."
     )
     st.stop()
 
 # ──────────────────────────────────────────────
-# Calcul des scores RFM pour la segmentation
+# Validation des données
 # ──────────────────────────────────────────────
-df_rfm["r_score"] = pd.qcut(df_rfm["recency"], 5, labels=[5, 4, 3, 2, 1])
-df_rfm["f_score"] = pd.qcut(
-    df_rfm["frequency"].rank(method="first"), 5, labels=[1, 2, 3, 4, 5]
-)
-df_rfm["m_score"] = pd.qcut(df_rfm["monetary"], 5, labels=[1, 2, 3, 4, 5])
-df_rfm["rfm_score"] = (
-    df_rfm["r_score"].astype(str)
-    + df_rfm["f_score"].astype(str)
-    + df_rfm["m_score"].astype(str)
-)
-df_rfm["segment"] = df_rfm.apply(assign_segment, axis=1)
+required_cols = [
+    "customer_id",
+    "recency",
+    "frequency",
+    "monetary",
+    "r_score",
+    "f_score",
+    "m_score",
+    "rfm_score",
+    "segment",
+]
+missing_cols = [col for col in required_cols if col not in df_rfm.columns]
+if missing_cols:
+    st.error(f"❌ Colonnes manquantes dans rfm_analysis: {missing_cols}")
+    st.stop()
 
 # ──────────────────────────────────────────────
 # Sidebar / Filtres
@@ -306,8 +311,9 @@ with tab1:
 
     with col_left:
         st.markdown("### 📈 Évolution du Chiffre d'Affaires Mensuel")
-        df_monthly = raw_stats["monthly_revenue"]
-        if not df_monthly.empty:
+        if "monthly_revenue" in raw_stats and not raw_stats["monthly_revenue"].empty:
+            df_monthly = raw_stats["monthly_revenue"].copy()
+            df_monthly["mois"] = pd.to_datetime(df_monthly["mois"])
             fig_revenue = px.area(
                 df_monthly,
                 x="mois",
@@ -323,11 +329,13 @@ with tab1:
                 height=400,
             )
             st.plotly_chart(fig_revenue, use_container_width=True)
+        else:
+            st.info("📭 Pas de données de chiffre d'affaires")
 
     with col_right:
         st.markdown("### 🌍 Top 10 Pays par Nombre de Clients")
-        df_countries = raw_stats["top_countries"]
-        if not df_countries.empty:
+        if "top_countries" in raw_stats and not raw_stats["top_countries"].empty:
+            df_countries = raw_stats["top_countries"].copy()
             fig_countries = px.bar(
                 df_countries,
                 x="nb_clients",
@@ -345,6 +353,8 @@ with tab1:
                 height=400,
             )
             st.plotly_chart(fig_countries, use_container_width=True)
+        else:
+            st.info("📭 Pas de données par pays")
 
 # ──────────────────────────────────────────────
 # TAB 2 : Segmentation RFM
@@ -370,71 +380,82 @@ with tab2:
 
     with col_left:
         st.markdown("### 🍩 Répartition des Segments")
-        segment_counts = df_filtered["segment"].value_counts().reset_index()
-        segment_counts.columns = ["segment", "count"]
-        fig_pie = px.pie(
-            segment_counts,
-            values="count",
-            names="segment",
-            color="segment",
-            color_discrete_map=SEGMENT_COLORS,
-            hole=0.4,
-        )
-        fig_pie.update_traces(textposition="inside", textinfo="percent+label")
-        fig_pie.update_layout(
-            showlegend=False,
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            height=450,
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
+        if not df_filtered.empty:
+            segment_counts = df_filtered["segment"].value_counts().reset_index()
+            segment_counts.columns = ["segment", "count"]
+            fig_pie = px.pie(
+                segment_counts,
+                values="count",
+                names="segment",
+                color="segment",
+                color_discrete_map=SEGMENT_COLORS,
+                hole=0.4,
+            )
+            fig_pie.update_traces(textposition="inside", textinfo="percent+label")
+            fig_pie.update_layout(
+                showlegend=False,
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                height=450,
+            )
+            st.plotly_chart(fig_pie, use_container_width=True)
+        else:
+            st.info("📭 Pas de données")
 
     with col_right:
         st.markdown("### 📊 Nombre de Clients par Segment")
-        segment_counts_sorted = segment_counts.sort_values("count", ascending=True)
-        fig_bar = px.bar(
-            segment_counts_sorted,
-            x="count",
-            y="segment",
-            orientation="h",
-            color="segment",
-            color_discrete_map=SEGMENT_COLORS,
-            labels={"count": "Nombre de clients", "segment": "Segment"},
-        )
-        fig_bar.update_layout(
-            showlegend=False,
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            yaxis=dict(showgrid=False),
-            xaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
-            height=450,
-        )
-        st.plotly_chart(fig_bar, use_container_width=True)
+        if not df_filtered.empty:
+            segment_counts = df_filtered["segment"].value_counts().reset_index()
+            segment_counts.columns = ["segment", "count"]
+            segment_counts_sorted = segment_counts.sort_values("count", ascending=True)
+            fig_bar = px.bar(
+                segment_counts_sorted,
+                x="count",
+                y="segment",
+                orientation="h",
+                color="segment",
+                color_discrete_map=SEGMENT_COLORS,
+                labels={"count": "Nombre de clients", "segment": "Segment"},
+            )
+            fig_bar.update_layout(
+                showlegend=False,
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                yaxis=dict(showgrid=False),
+                xaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
+                height=450,
+            )
+            st.plotly_chart(fig_bar, use_container_width=True)
+        else:
+            st.info("📭 Pas de données")
 
     # Tableau récapitulatif des segments
     st.markdown("### 📋 Statistiques par Segment")
-    segment_stats = (
-        df_filtered.groupby("segment")
-        .agg(
-            clients=("customer_id", "count"),
-            recence_moy=("recency", "mean"),
-            frequence_moy=("frequency", "mean"),
-            montant_moy=("monetary", "mean"),
-            montant_total=("monetary", "sum"),
+    if not df_filtered.empty:
+        segment_stats = (
+            df_filtered.groupby("segment")
+            .agg(
+                clients=("customer_id", "count"),
+                recence_moy=("recency", "mean"),
+                frequence_moy=("frequency", "mean"),
+                montant_moy=("monetary", "mean"),
+                montant_total=("monetary", "sum"),
+            )
+            .round(1)
+            .sort_values("montant_total", ascending=False)
+            .reset_index()
         )
-        .round(1)
-        .sort_values("montant_total", ascending=False)
-        .reset_index()
-    )
-    segment_stats.columns = [
-        "Segment",
-        "Clients",
-        "Récence moy. (j)",
-        "Fréquence moy.",
-        "Panier moy. (€)",
-        "Revenu total (€)",
-    ]
-    st.dataframe(segment_stats, use_container_width=True, hide_index=True)
+        segment_stats.columns = [
+            "Segment",
+            "Clients",
+            "Récence moy. (j)",
+            "Fréquence moy.",
+            "Panier moy. (€)",
+            "Revenu total (€)",
+        ]
+        st.dataframe(segment_stats, use_container_width=True, hide_index=True)
+    else:
+        st.info("📭 Pas de données après filtrage")
 
 # ──────────────────────────────────────────────
 # TAB 3 : Analyse détaillée
@@ -446,58 +467,64 @@ with tab3:
 
     with col_left:
         st.markdown("### 🔵 Récence vs. Fréquence")
-        fig_rf = px.scatter(
-            df_filtered,
-            x="recency",
-            y="frequency",
-            color="segment",
-            color_discrete_map=SEGMENT_COLORS,
-            size="monetary",
-            size_max=20,
-            opacity=0.6,
-            labels={
-                "recency": "Récence (jours)",
-                "frequency": "Fréquence",
-                "monetary": "Montant (€)",
-                "segment": "Segment",
-            },
-            hover_data=["customer_id"],
-        )
-        fig_rf.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
-            yaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
-            height=500,
-        )
-        st.plotly_chart(fig_rf, use_container_width=True)
+        if not df_filtered.empty:
+            fig_rf = px.scatter(
+                df_filtered,
+                x="recency",
+                y="frequency",
+                color="segment",
+                color_discrete_map=SEGMENT_COLORS,
+                size="monetary",
+                size_max=20,
+                opacity=0.6,
+                labels={
+                    "recency": "Récence (jours)",
+                    "frequency": "Fréquence",
+                    "monetary": "Montant (€)",
+                    "segment": "Segment",
+                },
+                hover_data=["customer_id", "monetary"],
+            )
+            fig_rf.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
+                yaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
+                height=500,
+            )
+            st.plotly_chart(fig_rf, use_container_width=True)
+        else:
+            st.info("📭 Pas de données")
 
     with col_right:
         st.markdown("### 🟢 Fréquence vs. Montant")
-        fig_fm = px.scatter(
-            df_filtered,
-            x="frequency",
-            y="monetary",
-            color="segment",
-            color_discrete_map=SEGMENT_COLORS,
-            size="monetary",
-            size_max=20,
-            opacity=0.6,
-            labels={
-                "frequency": "Fréquence",
-                "monetary": "Montant (€)",
-                "segment": "Segment",
-            },
-            hover_data=["customer_id"],
-        )
-        fig_fm.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
-            yaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
-            height=500,
-        )
-        st.plotly_chart(fig_fm, use_container_width=True)
+        if not df_filtered.empty:
+            fig_fm = px.scatter(
+                df_filtered,
+                x="frequency",
+                y="monetary",
+                color="segment",
+                color_discrete_map=SEGMENT_COLORS,
+                size="monetary",
+                size_max=20,
+                opacity=0.6,
+                labels={
+                    "frequency": "Fréquence",
+                    "monetary": "Montant (€)",
+                    "segment": "Segment",
+                },
+                hover_data=["customer_id", "recency"],
+            )
+            fig_fm.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
+                yaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
+                height=500,
+            )
+            st.plotly_chart(fig_fm, use_container_width=True)
+        else:
+            st.info("📭 Pas de données")
 
     st.markdown("---")
 
@@ -505,67 +532,82 @@ with tab3:
 
     with col_left2:
         st.markdown("### 📊 Distribution de la Récence")
-        fig_hist_r = px.histogram(
-            df_filtered,
-            x="recency",
-            nbins=50,
-            color="segment",
-            color_discrete_map=SEGMENT_COLORS,
-            labels={"recency": "Récence (jours)", "count": "Nombre de clients"},
-        )
-        fig_hist_r.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
-            height=400,
-            barmode="stack",
-        )
-        st.plotly_chart(fig_hist_r, use_container_width=True)
+        if not df_filtered.empty:
+            fig_hist_r = px.histogram(
+                df_filtered,
+                x="recency",
+                nbins=50,
+                color="segment",
+                color_discrete_map=SEGMENT_COLORS,
+                labels={"recency": "Récence (jours)", "count": "Nombre de clients"},
+            )
+            fig_hist_r.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
+                height=400,
+                barmode="stack",
+            )
+            st.plotly_chart(fig_hist_r, use_container_width=True)
+        else:
+            st.info("📭 Pas de données")
 
     with col_right2:
         st.markdown("### 💰 Distribution du Montant")
-        fig_hist_m = px.histogram(
-            df_filtered,
-            x="monetary",
-            nbins=50,
-            color="segment",
-            color_discrete_map=SEGMENT_COLORS,
-            labels={"monetary": "Montant (€)", "count": "Nombre de clients"},
-        )
-        fig_hist_m.update_layout(
-            plot_bgcolor="rgba(0,0,0,0)",
-            paper_bgcolor="rgba(0,0,0,0)",
-            xaxis=dict(showgrid=False),
-            yaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
-            height=400,
-            barmode="stack",
-        )
-        st.plotly_chart(fig_hist_m, use_container_width=True)
+        if not df_filtered.empty:
+            fig_hist_m = px.histogram(
+                df_filtered,
+                x="monetary",
+                nbins=50,
+                color="segment",
+                color_discrete_map=SEGMENT_COLORS,
+                labels={"monetary": "Montant (€)", "count": "Nombre de clients"},
+            )
+            fig_hist_m.update_layout(
+                plot_bgcolor="rgba(0,0,0,0)",
+                paper_bgcolor="rgba(0,0,0,0)",
+                xaxis=dict(showgrid=False),
+                yaxis=dict(showgrid=True, gridcolor="#ecf0f1"),
+                height=400,
+                barmode="stack",
+            )
+            st.plotly_chart(fig_hist_m, use_container_width=True)
+        else:
+            st.info("📭 Pas de données")
 
     # Heatmap RFM
     st.markdown("### 🗺️ Heatmap des Scores RFM (Récence × Fréquence)")
-    heatmap_data = (
-        df_filtered.groupby(["r_score", "f_score"])
-        .agg(count=("customer_id", "count"))
-        .reset_index()
-        .pivot(index="r_score", columns="f_score", values="count")
-        .fillna(0)
-    )
-    fig_heat = px.imshow(
-        heatmap_data,
-        labels=dict(x="Score Fréquence", y="Score Récence", color="Clients"),
-        x=[str(c) for c in heatmap_data.columns],
-        y=[str(i) for i in heatmap_data.index],
-        color_continuous_scale="Blues",
-        aspect="auto",
-    )
-    fig_heat.update_layout(
-        height=400,
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)",
-    )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    if not df_filtered.empty:
+        heatmap_data = (
+            df_filtered.groupby(["r_score", "f_score"], observed=True)
+            .size()
+            .reset_index(name="count")
+            .pivot(index="r_score", columns="f_score", values="count")
+            .fillna(0)
+            .astype(int)
+        )
+        # Créer une heatmap cohérente (de 1 à 5)
+        heatmap_full = pd.DataFrame(0, index=range(5, 0, -1), columns=range(1, 6))
+        heatmap_full.update(heatmap_data)
+
+        fig_heat = px.imshow(
+            heatmap_full,
+            labels=dict(x="Score Fréquence", y="Score Récence", color="Clients"),
+            x=list(range(1, 6)),
+            y=list(range(5, 0, -1)),
+            color_continuous_scale="Blues",
+            aspect="auto",
+            text_auto=True,
+        )
+        fig_heat.update_layout(
+            height=400,
+            plot_bgcolor="rgba(0,0,0,0)",
+            paper_bgcolor="rgba(0,0,0,0)",
+        )
+        st.plotly_chart(fig_heat, use_container_width=True)
+    else:
+        st.info("📭 Pas de données pour la heatmap")
 
 # ──────────────────────────────────────────────
 # TAB 4 : Données brutes
@@ -579,8 +621,9 @@ with tab4:
     with col2:
         st.metric("Clients total", f"{len(df_rfm):,}")
 
-    st.dataframe(
-        df_filtered[
+    if not df_filtered.empty:
+        # Formater les colonnes pour affichage
+        df_display = df_filtered[
             [
                 "customer_id",
                 "recency",
@@ -592,21 +635,40 @@ with tab4:
                 "rfm_score",
                 "segment",
             ]
-        ]
-        .sort_values("monetary", ascending=False)
-        .reset_index(drop=True),
-        use_container_width=True,
-        height=500,
-    )
+        ].copy()
 
-    # Export CSV
-    csv_export = df_filtered.to_csv(index=False).encode("utf-8")
-    st.download_button(
-        label="⬇️  Télécharger les données filtrées (CSV)",
-        data=csv_export,
-        file_name="rfm_segmentation.csv",
-        mime="text/csv",
-    )
+        df_display.columns = [
+            "ID",
+            "Récence (j)",
+            "Fréquence",
+            "Montant (€)",
+            "R",
+            "F",
+            "M",
+            "RFM",
+            "Segment",
+        ]
+        df_display = df_display.sort_values("Montant (€)", ascending=False).reset_index(
+            drop=True
+        )
+
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            height=500,
+            hide_index=False,
+        )
+
+        # Export CSV
+        csv_export = df_display.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            label="⬇️  Télécharger les données filtrées (CSV)",
+            data=csv_export,
+            file_name="rfm_segmentation.csv",
+            mime="text/csv",
+        )
+    else:
+        st.info("📭 Aucune donnée après filtrage")
 
 # ──────────────────────────────────────────────
 # Footer
