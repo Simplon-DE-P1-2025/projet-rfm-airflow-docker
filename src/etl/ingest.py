@@ -13,11 +13,13 @@ import glob
 import traceback
 
 
-def create_raw_table(conn, truncate=True):
-    """Crée la table brute et la vide si demandé"""
+def create_raw_table(conn):
+    """Détruit l'ancienne table et recrée une table brute à neuf"""
     cursor = conn.cursor()
     create_table_query = """
-    CREATE TABLE IF NOT EXISTS raw_orders (
+    DROP TABLE IF EXISTS raw_orders CASCADE;
+    
+    CREATE TABLE raw_orders (
         transaction_id SERIAL PRIMARY KEY,
         invoice VARCHAR(50),
         stock_code VARCHAR(50),
@@ -31,13 +33,10 @@ def create_raw_table(conn, truncate=True):
     """
     try:
         cursor.execute(create_table_query)
-        if truncate:
-            cursor.execute("TRUNCATE TABLE raw_orders RESTART IDENTITY;")
-            print("⟳ Table raw_orders vidée (Truncate + Restart Identity)")
         conn.commit()
-        print("✅ Table raw_orders prête")
+        print("✅ Table raw_orders prête (recréée à neuf)")
     except Exception as e:
-        print(f"⚠️ Erreur création/truncate table : {e}")
+        print(f"⚠️ Erreur création table : {e}")
         traceback.print_exc()
         conn.rollback()
     finally:
@@ -85,7 +84,7 @@ def ingest_data():
         conn = psycopg2.connect(DATABASE_URL)
 
         # On passe explicitement le truncate
-        create_raw_table(conn, truncate=True)
+        create_raw_table(conn)
 
         cursor = conn.cursor()
 

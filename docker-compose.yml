@@ -16,12 +16,33 @@ services:
       timeout: 5s
       retries: 5
 
+  # NOUVEAU SERVICE : Gère l'initialisation de la base Airflow (tourne 1 seule fois puis s'éteint)
+  # NOUVEAU SERVICE : Gère l'initialisation de la base Airflow (tourne 1 seule fois puis s'éteint) [cite: 5, 10, 31]
+  airflow-init:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    user: root
+    container_name: rfm_airflow_init
+    environment:
+      - AIRFLOW_HOME=/airflow
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql://${DB_USER:-rfm_user}:${DB_PASSWORD:-rfm_password}@postgres:5432/${DB_NAME:-rfm_db}
+      - DB_USER=${DB_USER:-rfm_user}
+      - DB_NAME=${DB_NAME:-rfm_db}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # On intègre le script directement ici pour contourner les erreurs de format Windows (CRLF) [cite: 9, 16, 57]
+    command: >
+      bash -c " echo '⏳ Attente de PostgreSQL...' && until pg_isready -h postgres -U $$DB_USER -d $$DB_NAME; do sleep 1; done && echo '🔧 Migration de la base...' && airflow db migrate && echo '👤 Création de l utilisateur admin...' && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com 2>/dev/null || echo 'L utilisateur existe deja' "
+
   airflow-webserver:
     build:
       context: .
       dockerfile: docker/Dockerfile
     user: root
     container_name: rfm_airflow_webserver
+    restart: always
     environment:
       - AIRFLOW_HOME=/airflow
       - AIRFLOW__CORE__DAGS_FOLDER=/airflow/dags
@@ -45,7 +66,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: bash -c "mkdir -p /airflow/logs && airflow db migrate && airflow users create --username admin --password admin --firstname Admin --lastname User --role Admin --email admin@example.com 2>/dev/null || true && airflow webserver"
+      airflow-init:
+        condition: service_completed_successfully
+    # Commande épurée : on ne fait que lancer le webserver
+    command: bash -c "airflow webserver"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
       interval: 30s
@@ -58,7 +82,7 @@ services:
       dockerfile: docker/Dockerfile
     user: root
     container_name: rfm_airflow_scheduler
-    restart: on-failure
+    restart: always
     environment:
       - AIRFLOW_HOME=/airflow
       - AIRFLOW__CORE__DAGS_FOLDER=/airflow/dags
@@ -80,7 +104,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    command: bash -c "mkdir -p /airflow/logs && airflow scheduler"
+      airflow-init:
+        condition: service_completed_successfully
+    # Commande épurée : on ne fait que lancer le scheduler
+    command: bash -c "airflow scheduler"
 
   pgadmin:
     image: dpage/pgadmin4
@@ -88,12 +115,12 @@ services:
     environment:
       PGADMIN_DEFAULT_EMAIL: admin@admin.com
       PGADMIN_DEFAULT_PASSWORD: admin
-      PGADMIN_CONFIG_SERVER_MODE: 'False' # Optimise l'interface pour un usage local
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
       PGADMIN_SERVER_JSON_FILE: /pgadmin4/servers.json
     ports:
       - "5050:80"
     volumes:
-      - ./servers.json:/pgadmin4/servers.json:ro # ro = read-only
+      - ./servers.json:/pgadmin4/servers.json:ro
     depends_on:
       postgres:
         condition: service_healthy
