@@ -1,16 +1,14 @@
 """
-Script de chargement - Sauvegarde les résultats RFM dans PostgreSQL (Version Robuste)
+Script de chargement - Copie les résultats RFM depuis rfm_analysis vers rfm_results
+Optimisé : SQL INSERT...SELECT au lieu de fichier CSV
 """
 
-import os
 import sys
-import pandas as pd
 import psycopg2
-from psycopg2.extras import execute_values
 from helpers import setup_paths
 
 setup_paths()
-from config import DATABASE_URL, DATA_PROCESSED_PATH
+from config import DATABASE_URL
 
 
 def create_rfm_table(cursor):
@@ -36,62 +34,34 @@ def create_rfm_table(cursor):
 
 
 def load_rfm_results():
-    """Charge les résultats RFM dans PostgreSQL"""
-
-    rfm_file = os.path.join(DATA_PROCESSED_PATH, "rfm_results.csv")
-
-    # 1. Validation de l'existence du fichier
-    if not os.path.exists(rfm_file):
-        raise FileNotFoundError(
-            f"❌ Le fichier CSV est introuvable : {rfm_file}\n"
-            "Assurez-vous que la tâche 'transform_rfm' l'a bien généré."
-        )
-
-    print(f"📂 Lecture du fichier RFM : {os.path.basename(rfm_file)}")
-
-    # 2. Lecture et validation des données
-    df = pd.read_csv(rfm_file)
-
-    if df.empty:
-        raise ValueError("❌ Le fichier CSV est vide. Rien à charger.")
-
-    expected_columns = [
-        "customer_id",
-        "recency",
-        "frequency",
-        "monetary",
-        "r_score",
-        "f_score",
-        "m_score",
-        "rfm_score",
-        "segment",
-    ]
-    missing_cols = [col for col in expected_columns if col not in df.columns]
-
-    if missing_cols:
-        raise KeyError(
-            f"❌ Colonnes manquantes dans le CSV : {missing_cols}\n"
-            "Avez-vous bien calculé les scores dans l'étape de transformation ?"
-        )
-
-    print(f"📊 {len(df)} clients RFM prêts à être chargés.")
-
-    df = df.astype(object).where(pd.notnull(df), None)
+    """Copie les résultats RFM depuis rfm_analysis vers rfm_results (SQL INSERT...SELECT)"""
 
     try:
         with psycopg2.connect(DATABASE_URL) as conn:
             with conn.cursor() as cursor:
                 print("✅ Connecté à PostgreSQL.")
 
+                # 1. Vérifier que rfm_analysis a des données
+                cursor.execute("SELECT COUNT(*) FROM rfm_analysis;")
+                count = cursor.fetchone()[0]
+                if count == 0:
+                    raise ValueError(
+                        "❌ Aucune donnée dans rfm_analysis. "
+                        "Assurez-vous que la tâche 'transform_rfm' s'est bien exécutée."
+                    )
+
+                print(f"📊 {count} clients RFM trouvés dans rfm_analysis")
+
+                # 2. Créer rfm_results si besoin
                 create_rfm_table(cursor)
 
-                values = [tuple(x) for x in df[expected_columns].to_numpy()]
-
-                # Requête Upsert
-                insert_query = """
+                # 3. Copie directe depuis rfm_analysis via UPSERT
+                copy_query = """
                 INSERT INTO rfm_results (customer_id, recency, frequency, monetary, 
                                         r_score, f_score, m_score, rfm_score, segment)
-                VALUES %s
+                SELECT customer_id, recency, frequency, monetary, 
+                       r_score, f_score, m_score, rfm_score, segment
+                FROM rfm_analysis
                 ON CONFLICT (customer_id) DO UPDATE SET
                     recency = EXCLUDED.recency,
                     frequency = EXCLUDED.frequency,
@@ -104,18 +74,23 @@ def load_rfm_results():
                     updated_at = CURRENT_TIMESTAMP;
                 """
 
-                print(f"⏳ Chargement de {len(values)} lignes en base...")
-                # execute_values est optimisé pour les insertions par lots
-                execute_values(cursor, insert_query, values, page_size=1000)
+                print(
+                    f"⏳ Copie de {count} lignes depuis rfm_analysis vers rfm_results..."
+                )
+                cursor.execute(copy_query)
+                conn.commit()
 
-        print("=" * 50)
-        print(
-            f"✅ SUCCÈS : {len(values)} clients RFM mis à jour/insérés dans PostgreSQL !"
-        )
-        print("=" * 50)
+                # 4. Vérification
+                cursor.execute("SELECT COUNT(*) FROM rfm_results;")
+                loaded_count = cursor.fetchone()[0]
+
+                print("=" * 50)
+                print(f"✅ SUCCÈS : {loaded_count} clients RFM dans rfm_results !")
+                print("=" * 50)
 
     except Exception as e:
-        raise RuntimeError(f"❌ Échec lors de l'insertion en base de données : {e}")
+        print(f"❌ Erreur lors du chargement RFM : {e}")
+        raise e
 
 
 if __name__ == "__main__":

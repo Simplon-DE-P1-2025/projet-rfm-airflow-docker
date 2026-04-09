@@ -9,7 +9,6 @@ from airflow.operators.python import PythonOperator
 import sys
 import os
 
-# Ajouter les chemins pour importer les scripts ETL et Analysis
 module_paths = [
     "/airflow/etl",  # Docker - ETL core scripts
     "/airflow/analysis",  # Docker - Advanced analytics scripts
@@ -76,7 +75,7 @@ with DAG(
     )
 
     # ─────────────────────────────────────────────────────────
-    # Tâches Avancées (Priority 3) - Exécutées en parallèle
+    # Tâches Analyses Avancées  - Exécutées en parallèle
     # ─────────────────────────────────────────────────────────
     task_product = PythonOperator(
         task_id="product_rfm_analysis",

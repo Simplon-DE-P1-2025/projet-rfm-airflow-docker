@@ -27,7 +27,7 @@ def transform_rfm(truncate=True):
 
         cursor.execute(
             """
-            CREATE TABLE IF NOT EXISTS rfm_analysis (
+            CREATE TABLE rfm_analysis (
                 customer_id INT PRIMARY KEY,
                 recency INT,
                 frequency INT,
@@ -153,11 +153,6 @@ def transform_rfm(truncate=True):
         )
         execute_values(cursor, insert_query, values_analysis)
         conn.commit()
-
-        # 7. EXPORT CSV POUR LE LOAD
-        csv_path = os.path.join(DATA_PROCESSED_PATH, "rfm_results.csv")
-        rfm.to_csv(csv_path, index=False)
-        print(f"💾 Sauvegarde du CSV réussie avec les scores : {csv_path}")
 
         cursor.close()
         print(f"✅ Transformation RFM terminée avec succès !")

@@ -1,119 +1,99 @@
-# 📊 Pipeline RFM - Airflow & Docker
+# 📊 Pipeline Data RFM — Orchestration Airflow & Docker
 
-Une pipeline de données complète pour analyser le comportement client avec la métrique **RFM** (Recency, Frequency, Monetary) orchestrée par **Apache Airflow** et containerisée avec **Docker**.
-
----
-
-## 🎯 À Propos
-
-Ce projet implémente une pipeline ETL (Extract, Transform, Load) qui :
-- **Ingère** des données de transactions depuis des fichiers CSV
-- **Transforme** les données pour calculer les scores RFM par client
-- **Charge** les résultats dans PostgreSQL
-- **Orchestre** le tout avec Airflow (exécution automatique quotidienne)
+**Projet pédagogique** : Pipeline ETL simple orchestrée avec Airflow, containerisée avec Docker, et visualisée avec Streamlit.
 
 ---
 
-## 🏗️ Architecture
+## 🎯 Objectifs
+
+Ce projet vise à apprendre les concepts clés du data engineering :
+
+✅ **Ingestion** : Charger des fichiers CSV dans PostgreSQL  
+✅ **Transformation** : Calculer les scores RFM (Recency, Frequency, Monetary)  
+✅ **Orchestration** : Automatiser la pipeline avec Airflow DAG  
+✅ **Containerisation** : Déployer tous les services avec Docker Compose  
+✅ **Visualisation** : Explorer les résultats avec Streamlit (bonus)
+
+---
+
+## 🏗️ Architecture Simplifiée
 
 ```
+                    ETL PIPELINE
+                        
 ┌─────────────────────────────────────────────────────────────┐
-│                    PIPELINE RFM                              │
+│                    PIPELINE RFM                             │
 ├─────────────────────────────────────────────────────────────┤
-│                                                               │
-│  CSV (data/raw/)                                             │
-│      ↓                                                        │
-│  ┌──────────────────────────────────────────────────┐        │
-│  │  TÂCHE 1 : INGESTION                             │        │
-│  │  • Lecture des fichiers CSV                      │        │
-│  │  • Chargement dans PostgreSQL (raw_data)         │        │
-│  └──────────────────────────────────────────────────┘        │
-│      ↓                                                        │
-│  ┌──────────────────────────────────────────────────┐        │
-│  │  TÂCHE 2 : TRANSFORMATION RFM                    │        │
-│  │  • Calcul Recency (jours depuis dernier achat)   │        │
-│  │  • Calcul Frequency (nombre d'achats)            │        │
-│  │  • Calcul Monetary (total des dépenses)          │        │
-│  │  • Scoring RFM (1-5 pour chaque dimension)       │        │
-│  └──────────────────────────────────────────────────┘        │
-│      ↓                                                        │
-│  ┌──────────────────────────────────────────────────┐        │
-│  │  TÂCHE 3 : CHARGEMENT                            │        │
-│  │  • Sauvegarde dans PostgreSQL (rfm_results)      │        │
-│  │  • Export en CSV (data/processed/)                │        │
-│  └──────────────────────────────────────────────────┘        │
-│      ↓                                                        │
+│                                                             │
+│  CSV (data/raw/)                                            │
+│      ↓                                                      │
+│  ┌──────────────────────────────────────────────────┐       │
+│  │  TÂCHE 1 : INGESTION (ingest.py)                 │       │
+│  │  • Lecture des fichiers CSV                      │       │
+│  │  • Chargement dans PostgreSQL (raw_data)         │       │
+│  └──────────────────────────────────────────────────┘       │
+│      ↓                                                      │
+│  ┌──────────────────────────────────────────────────┐       │
+│  │  TÂCHE 2 : TRANSFORMATION RFM (transform.py)     │       │
+│  │  • Calcul Recency (jours depuis dernier achat)   │       │
+│  │  • Calcul Frequency (nombre d'achats)            │       │
+│  │  • Calcul Monetary (total des dépenses)          │       │
+│  │  • Scoring RFM (1-5 pour chaque dimension)       │       │
+│  └──────────────────────────────────────────────────┘       │
+│      ↓                                                      │
+│  ┌──────────────────────────────────────────────────┐       │
+│  │  TÂCHE 3 : CHARGEMENT (load.py)                  │       │
+│  │  • Sauvegarde dans PostgreSQL (rfm_results)      │       │
+│  └──────────────────────────────────────────────────┘       │
+│      ↓                                                      │
 │  PostgreSQL Database                                        │
 │  - Données brutes (raw_data)                                │
 │  - Résultats RFM (rfm_results)                              │
-│                                                               │
+│                                                             │
 └─────────────────────────────────────────────────────────────┘
+Orchestrator: Apache Airflow (DAG: rfm_pipeline)
+Container: Docker Compose (3 services)
+Visualization: Streamlit Dashboard (optional)
 
-Orchestrateur : Apache Airflow (interface web http://localhost:8080)
-Conteneurisation : Docker Compose
-Base de données : PostgreSQL 15
 ```
 
 ---
 
 ## 📋 Prérequis
 
-| Composant | Version | Installation |
-|-----------|---------|--------------|
-| **Docker Desktop** | 4.0+ | [Télécharger](https://www.docker.com/products/docker-desktop) |
-| **Docker Compose** | 1.29+ | Inclus dans Docker Desktop |
-| **PowerShell** | 5.0+ | Disponible sur Windows |
-
-**Vérification :**
-```powershell
-docker --version
-docker-compose --version
-```
+| Outil | Version | Vérifier |
+|-------|---------|----------|
+| Docker Desktop | 4.0+ | `docker --version` |
+| Docker Compose | 1.29+ | `docker-compose --version` |
+| PowerShell | 5.0+ | Inclus Windows 10+ |
 
 ---
 
-## 🚀 Démarrage Rapide
+## 🚀 Démarrage (3 étapes)
 
-### 1️⃣ Préparation
+### 1️⃣ Initialisation de la Base de Données
 
 ```powershell
 cd "d:\data eng\projet-rfm-airflow-docker"
 
-# Créer les dossiers nécessaires
-mkdir -p airflow/logs
-mkdir -p data/raw
-mkdir -p data/processed
-```
-
-### 2️⃣ Initialisation (une seule fois)
-
-```powershell
-# Nettoyer les anciens conteneurs
-docker-compose down -v
-
-# Lancer PostgreSQL
+# Démarrer PostgreSQL uniquement
 docker-compose up -d postgres
-
-# Attendre ~15 secondes
 Start-Sleep -Seconds 15
 
-# Initialiser la base Airflow
+# Initialiser Airflow
 docker-compose run --rm airflow-webserver airflow db migrate
 
-# Créer l'utilisateur administrateur
+# Créer utilisateur admin
 docker-compose run --rm airflow-webserver airflow users create `
-  --username admin `
-  --password admin `
-  --firstname Admin `
-  --lastname User `
-  --role Admin `
-  --email admin@example.com
+  --username admin --password admin `
+  --firstname Admin --lastname User `
+  --role Admin --email admin@example.com
 ```
 
-### 3️⃣ Lancer les Services
+### 2️⃣ Lancer Tous les Services
 
 ```powershell
-# Démarrer tous les conteneurs
+# Démarrer la pipeline complète
 docker-compose up -d
 
 # Attendre 2-3 minutes pour que Airflow démarre
@@ -123,45 +103,41 @@ Start-Sleep -Seconds 180
 docker-compose ps
 ```
 
-### 4️⃣ Accéder à Airflow
+### 3️⃣ Accéder à Airflow
 
-Ouvrez votre navigateur : **http://localhost:8080**
+Ouvrir navigateur : **http://localhost:8080**
 
-**Identifiants :**
-- 👤 Username : `admin`
-- 🔐 Password : `admin`
+**Login :**
+- Username: `admin`
+- Password: `admin`
 
 ---
 
-## 📖 Utilisation
+## 📖 Utilisation Simple
 
-### Déclencher le DAG manuellement
+### ▶️ Exécuter la Pipeline
 
-1. **Dans l'interface Airflow UI :**
-   - Cherchez le DAG `rfm_pipeline`
-   - Cliquez sur le toggle pour l'**activer** (ON)
-   - Cliquez sur **"Trigger DAG"**
+1. **Interface Airflow UI** :
+   - Chercher le DAG `rfm_pipeline`
+   - Cliquer sur le toggle ON
+   - Cliquer "Trigger DAG"
 
-2. **Ou en ligne de commande :**
+2. **Ou ligne de commande** :
    ```powershell
    docker-compose exec airflow-webserver airflow dags trigger rfm_pipeline
    ```
 
-### Monitoring
+### 📊 Résultats
 
-- **Logs en direct :**
-  ```powershell
-  docker-compose logs -f airflow-webserver
-  ```
+Après exécution, vérifier les données :
 
-- **État des tâches :**
-  Consultez la page "Graph View" dans Airflow UI
+```powershell
+# Vérifier dans PostgreSQL
+docker-compose exec postgres psql -U rfm_user -d rfm_db -c "SELECT COUNT(*) FROM rfm_results;"
 
-- **Résultats :**
-  ```powershell
-  # Les résultats sont sauvegardés dans
-  data/processed/rfm_results.csv
-  ```
+# Visualiser avec Streamlit (si disponible)
+# Accès: http://localhost:8501
+```
 
 ---
 
@@ -170,218 +146,197 @@ Ouvrez votre navigateur : **http://localhost:8080**
 ```
 projet-rfm-airflow-docker/
 │
-├── src/                           # Code source
+├── src/
 │   ├── dags/
-│   │   └── rfm_pipeline_dag.py    # DAG Airflow (3 tâches)
-│   └── etl/
-│       ├── ingest.py              # Ingestion CSV → PostgreSQL
-│       ├── transform.py           # Calcule les scores RFM
-│       ├── load.py                # Charge RFM → PostgreSQL
-│       └── helpers.py             # Utilitaires d'import
+│   │   └── rfm_pipeline_dag.py    ← DAG Airflow (orchestration)
+│   ├── etl/
+│   │   ├── ingest.py              ← Charge CSV → PostgreSQL
+│   │   ├── transform.py           ← Calcule RFM
+│   │   ├── load.py                ← Copie → rfm_results
+│   │   └── helpers.py             ← Utilitaires
+│   ├── analysis/                  ← Analyses avancées (optionnel)
+│   └── app/
+│       └── main.py                ← Dashboard Streamlit
 │
 ├── data/
-│   ├── raw/                       # 📥 CSV brutes à ingérer
-│   │   ├── online_retail_II-2009.csv
-│   │   └── online_retail_II-2010.csv
-│   └── processed/                 # 📤 RFM résultats
-│       └── rfm_results.csv
-│
-├── config/
-│   ├── config.py                  # Configuration centralisée
-│   └── __init__.py
+│   ├── raw/                       ← 📥 CSV à traiter
 │
 ├── docker/
-│   └── Dockerfile                 # Image Airflow custom
+│   └── Dockerfile                 ← Image custom Airflow
 │
-├── airflow/
-│   └── logs/                       # 📝 Logs Airflow
-│
-├── docker-compose.yml             # Orchestration services
-├── .env                           # Variables d'environnement
-├── requirements.txt               # Dépendances Python
-├── .gitignore
-└── README.md                      # Ce fichier
+├── docker-compose.yml             ← Orchestration services
+├── requirements.txt               ← Dépendances Python
+├── .env                          ← Configuration env
+└── README.md                     ← Ce fichier
 ```
 
 ---
 
-## 🔧 Configuration
+## 🔑 Concepts Clés Expliqués
 
-### Variables d'environnement (`.env`)
+### 1. Pipeline RFM (étapes ETL)
 
-```dotenv
-# PostgreSQL
-DB_HOST=postgres
-DB_PORT=5432
-DB_NAME=rfm_db
-DB_USER=rfm_user
-DB_PASSWORD=rfm_password
+| Étape | Fonction | Fichier |
+|-------|----------|---------|
+| **E**xtract | Lire CSV et charger en PostgreSQL (table `raw_orders`) | `ingest.py` |
+| **T**ransform | Calculer Recency, Frequency, Monetary + scores 1-5 | `transform.py` |
+| **L**oad | Copier résultats dans `rfm_results` | `load.py` |
 
-# Airflow
-AIRFLOW_HOME=/airflow
-AIRFLOW__CORE__DAGS_FOLDER=/airflow/dags
-AIRFLOW__CORE__LOAD_EXAMPLES=False
+**Formule RFM Simple :**
+- **Recency** = jours depuis dernier achat (moins = mieux)
+- **Frequency** = nombre total d'achats (plus = mieux)
+- **Monetary** = montant total dépensé (plus = mieux)
+
+Chaque dimension reçoit un score de **1 à 5** (via quartiles).
+
+### 2. Airflow DAG (Orchestration)
+
+**DAG `rfm_pipeline`** :
+```
+ingest_data 
+    ↓
+transform_rfm
+    ↓
+load_rfm_results
+    ↓
+(+ 4 tâches parallèles d'analyses avancées - optionnel)
 ```
 
----
+**Fréquence** : @daily (run quotidien à minuit)  
+**Retry** : 1 essai après 5 minutes en cas d'erreur
 
-## 📊 Vérification du Fonctionnement
+### 3. Docker Compose (Services)
 
-### ✅ Checklist après démarrage
-
-- [ ] Tous les conteneurs sont "Up" : `docker-compose ps`
-- [ ] http://localhost:8080 accessible
-- [ ] Page de login Airflow visible
-- [ ] DAG `rfm_pipeline` affiché dans la liste
-- [ ] Trois tâches visibles dans le DAG
-
-### ✅ Après exécution du DAG
-
-- [ ] Les 3 tâches deviennent vertes (succès)
-- [ ] Fichier `data/processed/rfm_results.csv` créé
-- [ ] PostgreSQL contient les tables :
-  ```powershell
-  # Vérifier les données
-  docker-compose exec postgres psql -U rfm_user -d rfm_db -c "SELECT COUNT(*) FROM rfm_results;"
-  ```
+| Service | Rôle | Port |
+|---------|------|------|
+| `postgres` | Base de données RFM | 5432 (interne) |
+| `airflow-webserver` | Interface Airflow UI | 8080 |
+| `airflow-scheduler` | Lance les DAGs (tous les jours) | interne |
+| `streamlit` | Dashboard visualisation | 8501 |
 
 ---
 
-## 📋 Commandes Utiles
+## ✅ Checklist de Vérification
 
-| Commande | Action |
-|----------|--------|
-| `docker-compose up -d` | Démarrer tous les services |
-| `docker-compose down` | Arrêter tous les services |
-| `docker-compose ps` | État des conteneurs |
-| `docker-compose logs -f SERVICE` | Logs en direct d'un service |
-| `docker-compose exec SERVICE COMMAND` | Exécuter une commande dans un conteneur |
-| `docker volume prune -f` | Nettoyer les volumes Docker orphelins |
+Après démarrage :
 
----
+- [ ] `docker-compose ps` → tous les services "Up"
+- [ ] http://localhost:8080 → page login Airflow
+- [ ] Connexion avec admin/admin ✓
+- [ ] DAG `rfm_pipeline` visible en haut
+- [ ] Tâches `ingest_data`, `transform_rfm`, `load_rfm_results` apparentes
 
-## 🐛 Troubleshooting
+Après exécution du DAG :
 
-### Le DAG n'apparaît pas dans Airflow
+- [ ] Les 3 tâches deviennent **vertes** (success)
+- [ ] Pas d'erreurs visibles dans les logs
+- [ ] PostgreSQL contient les tables : `raw_orders`, `rfm_analysis`, `rfm_results`
 
 ```powershell
-# Vérifier que le fichier DAG est au bon endroit
-docker-compose exec airflow-webserver ls -la /airflow/dags/
-
-# Redémarrer le scheduler
-docker-compose restart airflow-scheduler
+# Vérifier les tables
+docker-compose exec postgres psql -U rfm_user -d rfm_db -c "\dt"
 ```
 
-### Erreur de connexion PostgreSQL
+---
+
+## 🛠️ Commandes Essentielles
 
 ```powershell
-# Vérifier que PostgreSQL est prêt
-docker-compose logs postgres
-
-# Redémarrer PostgreSQL
-docker-compose restart postgres
-Start-Sleep -Seconds 10
+# Démarrer
 docker-compose up -d
-```
 
-### Les conteneurs Airflow crashent
+# Arrêter
+docker-compose down
 
-```powershell
-# Voir les logs d'erreur
-docker-compose logs airflow-webserver | Select-Object -Last 50
+# État des services
+docker-compose ps
 
-# Reset complet
+# Logs en direct
+docker-compose logs -f airflow-webserver
+
+# Reset complet (⚠️ supprime toutes données)
 docker-compose down -v
 docker volume prune -f
-mkdir -p airflow/logs
 docker-compose up -d
-Start-Sleep -Seconds 300
-docker-compose ps
-```
-
-### Les fichiers CSV ne sont pas dans `/airflow/data`
-
-```powershell
-# Vérifier les permissions
-ls -la data/raw/
-
-# Les fichiers doivent être dans :
-d:\data eng\projet-rfm-airflow-docker\data\raw\
 ```
 
 ---
 
-## 📈 Étendre le Projet
+## 🎓 Choix Techniques Justifiés
 
-### Ajouter une nouvelle tâche Airflow
+### Pourquoi Airflow ?
+- **Simple** : DAG Python facile à lire
+- **Couramment utilisé** : Standard industrie
+- **Interface visuelle** : Monitoring facile
 
-1. Créer un script Python dans `src/etl/`
-2. L'importer dans `src/dags/rfm_pipeline_dag.py`
-3. Ajouter une tâche PythonOperator
-4. Définir les dépendances
+### Pourquoi PostgreSQL ?
+- **Robuste** : Base relationnelle SQL standard
+- **Conteneurisable** : Image Docker officielle
+- **Performant** : Suffit pour données petites/moyennes
 
-### Modifier la fréquence d'exécution
+### Pourquoi Docker Compose ?
+- **Multi-services** : PostgreSQL + Airflow + Streamlit ensemble
+- **Reproductible** : Même config partout (dev, prod)
+- **Facile** : Une commande `up` pour tout lancer
 
-Dans `src/dags/rfm_pipeline_dag.py`, changer `schedule_interval` :
-```python
-schedule_interval='@daily'     # Quotidien
-schedule_interval='@weekly'    # Hebdomadaire
-schedule_interval='0 2 * * *'  # Tous les jours à 2h du matin
+### Pipeline Optimisée (Sans fichier CSV intermédiaire)
+- **Avant** : data → CSV → PostgreSQL (2 I/O)
+- **Après** : PostgreSQL → PostgreSQL (SQL direct = plus rapide)
+- **Bénéfice** : Source unique de vérité, pas de synchronisation
+
+---
+
+## 📈 Résultats Attendus
+
+Après exécution complète du DAG :
+
+**Table `rfm_results`** : 4000+ clients avec :
+
+```
+customer_id | recency | frequency | monetary | r_score | f_score | m_score | segment
+     543    |   12    |     8     |  1250.50 |    5    |    4    |    5    | Champions
+     789    |   180   |     2     |   200.00 |    1    |    1    |    1    | Perdus
+     ...
 ```
 
-### Ajouter de la visualisation
+**8 segments de clients** identifiés automatiquement :
+- 🏆 Champions (meilleurs clients)
+- 💎 Clients Fidèles
+- 🌱 Nouveaux Clients
+- 📈 Clients Potentiels
+- ⚠️ À Risque
+- 💤 Perdus
+- 🔄 À Réactiver
+- ➖ Moyens
 
-Integrer Streamlit ou Metabase pour visualiser les résultats RFM.
+---
+
+## 🐛 Dépannage Rapide
+
+| Problème | Solution |
+|----------|----------|
+| DAG n'apparaît pas | `docker-compose restart airflow-scheduler` |
+| Erreur connexion PostgreSQL | `docker-compose logs postgres` |
+| Conteneurs ne démarrent pas | `docker-compose down -v` + `up -d` |
+| Permission denied | Vérifier `data/raw/` accessible |
+
+---
+
+## 🎯 Prochaines Étapes (Optionnel)
+
+1. **Dashboard Streamlit** : Visualiser les segments
+2. **Analyses avancées** : Churn prediction, CLV forecast
+3. **Export** : Fichier Excel final
+4. **Alertes** : Notifier quand segment "Perdus" augmente
 
 ---
 
 ## 📚 Ressources
 
-- **Dataset Original** : [Online Retail II - UCI](https://archive.ics.uci.edu/dataset/502/online+retail+ii)
-- **Airflow Docs** : [Apache Airflow](https://airflow.apache.org/)
-- **Docker Docs** : [Docker Documentation](https://docs.docker.com/)
-- **PostgreSQL** : [PostgreSQL 15](https://www.postgresql.org/)
+- **Dataset**: [Online Retail II - UCI](https://archive.ics.uci.edu/dataset/502/online+retail+ii)
+- **Airflow Docs**: http://localhost:8080/docs (une fois lancé)
+- **Docker Docs**: https://docs.docker.com/
 
 ---
 
-## 📝 Notes
 
-- Les logs Airflow sont sauvegardés dans `airflow/logs/`
-- Les données brutes ne sont **jamais supprimées** pendant l'exécution
-- Les fichiers RFM sont écrasés à chaque exécution (mode `truncate_insert`)
-- L'utilisateur Airflow par défaut est `admin / admin` (à changer en production)
-
----
-
-## 👥 Auteurs
-
-Développé comme projet pédagogique pour apprendre :
-- ETL et data engineering
-- Orchestration avec Airflow
-- Containerisation avec Docker
-- Analyse RFM (segmentation clients)
-
----
-
-## 📞 Support
-
-Pour les problèmes :
-
-1. **Vérifier les logs :**
-   ```powershell
-   docker-compose logs SERVICE_NAME
-   ```
-
-2. **Consulter la documentation Airflow :**
-   http://localhost:8080/documentation
-
-3. **Reset et redémarrage complet :**
-   ```powershell
-   docker-compose down -v
-   docker volume prune -f
-   docker-compose up -d
-   ```
-
----
-
-**✨ Bon workflow ! ✨**

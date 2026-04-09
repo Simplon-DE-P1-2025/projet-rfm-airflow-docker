@@ -1,6 +1,3 @@
-# À AJOUTER à la fin de src/app/main.py avant la fermeture du fichier
-# Après tab4, avant la fin du fichier
-
 # ──────────────────────────────────────────────
 # TAB 5 : Advanced Analytics
 # ──────────────────────────────────────────────
