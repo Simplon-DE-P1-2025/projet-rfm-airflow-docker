@@ -1,24 +1,20 @@
 """
-Script de chargement - Sauvegarde les résultats RFM dans PostgreSQL
+Script de chargement - Sauvegarde les résultats RFM dans PostgreSQL (Version Robuste)
 """
 
-import sys
 import os
-from helpers import setup_paths
-
-setup_paths()
-
+import sys
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
+from helpers import setup_paths
+
+setup_paths()
 from config import DATABASE_URL, DATA_PROCESSED_PATH
-import os
 
 
-def create_rfm_table(conn):
-    """Crée la table pour les résultats RFM"""
-    cursor = conn.cursor()
-
+def create_rfm_table(cursor):
+    """Crée la table pour les résultats RFM si elle n'existe pas"""
     create_table_query = """
     CREATE TABLE IF NOT EXISTS rfm_results (
         id SERIAL PRIMARY KEY,
@@ -33,98 +29,101 @@ def create_rfm_table(conn):
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """
-
-    try:
-        cursor.execute(create_table_query)
-        conn.commit()
-        print("✅ Table rfm_results créée")
-        return True
-    except Exception as e:
-        print(f"❌ Erreur création table : {e}")
-        conn.rollback()
-        return False
-    finally:
-        cursor.close()
+    cursor.execute(create_table_query)
+    print("✅ Structure de la table rfm_results vérifiée.")
 
 
 def load_rfm_results():
     """Charge les résultats RFM dans PostgreSQL"""
 
-    # 1. Lire le fichier RFM
     rfm_file = os.path.join(DATA_PROCESSED_PATH, "rfm_results.csv")
 
+    # 1. Validation de l'existence du fichier
     if not os.path.exists(rfm_file):
-        print(f"❌ Fichier RFM non trouvé : {rfm_file}")
-        return False
+        raise FileNotFoundError(
+            f"❌ Le fichier CSV est introuvable : {rfm_file}\n"
+            "Assurez-vous que la tâche 'transform_rfm' l'a bien généré."
+        )
 
     print(f"📂 Lecture du fichier RFM : {os.path.basename(rfm_file)}")
 
+    # 2. Lecture et validation des données
+    df = pd.read_csv(rfm_file)
+
+    if df.empty:
+        raise ValueError("❌ Le fichier CSV est vide. Rien à charger.")
+
+    # Vérification stricte des colonnes attendues
+    expected_columns = [
+        "customer_id",
+        "recency",
+        "frequency",
+        "monetary",
+        "r_score",
+        "f_score",
+        "m_score",
+        "rfm_score",
+    ]
+    missing_cols = [col for col in expected_columns if col not in df.columns]
+
+    if missing_cols:
+        raise KeyError(
+            f"❌ Colonnes manquantes dans le CSV : {missing_cols}\n"
+            "Avez-vous bien calculé les scores dans l'étape de transformation ?"
+        )
+
+    print(f"📊 {len(df)} clients RFM prêts à être chargés.")
+
+    # Nettoyage des données pour Postgres (NaN -> None)
+    df = df.astype(object).where(pd.notnull(df), None)
+
+    # 3. Connexion et insertion sécurisées avec Context Manager
+    # Le bloc "with" s'occupe de faire le commit() si tout va bien,
+    # ou le rollback() et la fermeture si ça plante.
     try:
-        df = pd.read_csv(rfm_file)
-        print(f"📊 {len(df)} clients RFM à charger")
-    except Exception as e:
-        print(f"❌ Erreur lecture fichier : {e}")
-        return False
+        with psycopg2.connect(DATABASE_URL) as conn:
+            with conn.cursor() as cursor:
+                print("✅ Connecté à PostgreSQL.")
 
-    # 2. Connexion et insertion
-    try:
-        conn = psycopg2.connect(DATABASE_URL)
-        print("✅ Connecté à PostgreSQL\n")
+                # S'assurer que la table existe
+                create_rfm_table(cursor)
 
-        if not create_rfm_table(conn):
-            return False
+                # Préparation des valeurs
+                values = [tuple(x) for x in df[expected_columns].to_numpy()]
 
-        cursor = conn.cursor()
+                # Requête Upsert
+                insert_query = """
+                INSERT INTO rfm_results (customer_id, recency, frequency, monetary, 
+                                        r_score, f_score, m_score, rfm_score)
+                VALUES %s
+                ON CONFLICT (customer_id) DO UPDATE SET
+                    recency = EXCLUDED.recency,
+                    frequency = EXCLUDED.frequency,
+                    monetary = EXCLUDED.monetary,
+                    r_score = EXCLUDED.r_score,
+                    f_score = EXCLUDED.f_score,
+                    m_score = EXCLUDED.m_score,
+                    rfm_score = EXCLUDED.rfm_score,
+                    created_at = CURRENT_TIMESTAMP;
+                """
 
-        # Préparer les données
-        columns = [
-            "customer_id",
-            "recency",
-            "frequency",
-            "monetary",
-            "r_score",
-            "f_score",
-            "m_score",
-            "rfm_score",
-        ]
+                print(f"⏳ Chargement de {len(values)} lignes en base...")
+                # execute_values est optimisé pour les insertions par lots
+                execute_values(cursor, insert_query, values, page_size=1000)
 
-        values = [tuple(x) for x in df[columns].to_numpy()]
-
-        # Insérer avec upsert (UPDATE si existe, INSERT sinon)
-        insert_query = """
-        INSERT INTO rfm_results (customer_id, recency, frequency, monetary, 
-                                r_score, f_score, m_score, rfm_score)
-        VALUES %s
-        ON CONFLICT (customer_id) DO UPDATE SET
-            recency = EXCLUDED.recency,
-            frequency = EXCLUDED.frequency,
-            monetary = EXCLUDED.monetary,
-            r_score = EXCLUDED.r_score,
-            f_score = EXCLUDED.f_score,
-            m_score = EXCLUDED.m_score,
-            rfm_score = EXCLUDED.rfm_score
-        """
-
-        print(f"⏳ Chargement de {len(values)} clients RFM...")
-        execute_values(cursor, insert_query, values)
-        conn.commit()
-
-        cursor.close()
-        conn.close()
-
+        # Si on sort du bloc 'with' sans erreur, le commit est automatique
         print("=" * 50)
-        print(f"✅ {len(values)} clients RFM chargés !")
+        print(
+            f"✅ SUCCÈS : {len(values)} clients RFM mis à jour/insérés dans PostgreSQL !"
+        )
         print("=" * 50)
-        return True
 
     except Exception as e:
-        print(f"❌ Erreur : {e}")
-        import traceback
-
-        traceback.print_exc()
-        return False
+        # En cas d'erreur SQL ou de connexion, on lève l'exception pour Airflow
+        raise RuntimeError(f"❌ Échec lors de l'insertion en base de données : {e}")
 
 
 if __name__ == "__main__":
-    success = load_rfm_results()
-    exit(0 if success else 1)
+    # Plus besoin de if/else avec des exit codes manuels,
+    # Python remontera naturellement l'erreur au système s'il y a un plantage.
+    load_rfm_results()

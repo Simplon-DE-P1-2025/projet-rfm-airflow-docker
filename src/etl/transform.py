@@ -1,21 +1,22 @@
+import os
 import sys
-from helpers import setup_paths
-
-setup_paths()
-
 import pandas as pd
 import psycopg2
 from psycopg2.extras import execute_values
 from sqlalchemy import create_engine
-from config import DATABASE_URL
 import traceback
+
+from helpers import setup_paths
+
+setup_paths()
+from config import DATABASE_URL, DATA_PROCESSED_PATH
 
 
 def transform_rfm(truncate=True):
-    """Calcule le RFM et charge les données dans la table Silver rfm_analysis"""
+    """Calcule le RFM, génère les scores et exporte le résultat"""
     conn = None
     try:
-        # 1. Préparation de la table avec psycopg2
+        # 1. Préparation de la table intermédiaire (Silver)
         conn = psycopg2.connect(DATABASE_URL)
         cursor = conn.cursor()
 
@@ -27,7 +28,7 @@ def transform_rfm(truncate=True):
                 frequency INT,
                 monetary NUMERIC
             );
-        """
+            """
         )
 
         if truncate:
@@ -36,9 +37,8 @@ def transform_rfm(truncate=True):
 
         conn.commit()
 
-        # 2. Lecture des données avec SQLAlchemy (pour éviter le UserWarning)
+        # 2. Lecture des données brutes
         print("📖 Lecture des données depuis PostgreSQL...")
-        # On remplace postgres:// par postgresql:// pour SQLAlchemy si nécessaire
         engine_url = DATABASE_URL.replace("postgres://", "postgresql://")
         engine = create_engine(engine_url)
 
@@ -50,16 +50,11 @@ def transform_rfm(truncate=True):
         df = pd.read_sql(query, engine)
 
         if df.empty:
-            print("⚠️ Aucune donnée trouvée pour le calcul RFM.")
-            return False
+            raise ValueError("⚠️ Aucune donnée trouvée pour le calcul RFM.")
 
-        # 3. Calculs RFM
-        print("🧪 Calcul des scores RFM...")
-
-        # Montant total par ligne
+        # 3. Calculs des métriques RFM brutes
+        print("🧪 Calcul des métriques RFM...")
         df["amount"] = df["price"] * df["quantity"]
-
-        # Date de référence pour la récence
         max_date = df["invoice_date"].max()
 
         rfm = (
@@ -73,15 +68,33 @@ def transform_rfm(truncate=True):
             )
             .reset_index()
         )
-
         rfm.columns = ["customer_id", "recency", "frequency", "monetary"]
 
         # Nettoyage des montants négatifs ou nuls
-        rfm = rfm[rfm["monetary"] > 0]
+        rfm = rfm[rfm["monetary"] > 0].copy()
 
-        # 4. Insertion par batch (CORRECTION DU BUG NUMPY)
-        print(f"⏳ Insertion de {len(rfm)} profils clients...")
+        # 4. SCORING RFM (Nouveau !)
+        print("🎯 Attribution des scores de 1 à 5...")
 
+        # Récence : plus c'est bas, mieux c'est (5 = très récent, 1 = très ancien)
+        rfm["r_score"] = pd.qcut(rfm["recency"], 5, labels=[5, 4, 3, 2, 1])
+
+        # Fréquence & Montant : plus c'est haut, mieux c'est (5 = très élevé, 1 = très faible)
+        # On utilise rank(method='first') pour gérer les doublons (ex: beaucoup de clients avec 1 seul achat)
+        rfm["f_score"] = pd.qcut(
+            rfm["frequency"].rank(method="first"), 5, labels=[1, 2, 3, 4, 5]
+        )
+        rfm["m_score"] = pd.qcut(rfm["monetary"], 5, labels=[1, 2, 3, 4, 5])
+
+        # Création du score global sous forme de chaîne (ex: "555" pour le meilleur client)
+        rfm["rfm_score"] = (
+            rfm["r_score"].astype(str)
+            + rfm["f_score"].astype(str)
+            + rfm["m_score"].astype(str)
+        )
+
+        # 5. Insertion dans la table intermédiaire rfm_analysis
+        print(f"⏳ Insertion de {len(rfm)} profils clients dans rfm_analysis...")
         insert_query = """
             INSERT INTO rfm_analysis (customer_id, recency, frequency, monetary)
             VALUES %s
@@ -90,17 +103,22 @@ def transform_rfm(truncate=True):
                 frequency = EXCLUDED.frequency,
                 monetary = EXCLUDED.monetary;
         """
-
-        # SOLUTION : Conversion en types Python natifs pour éviter l'erreur "schema np"
-        # .astype(object) transforme les types numpy en types python lors du passage en liste
-        values = rfm.astype(object).values.tolist()
-
-        # On utilise le cursor ouvert au début
-        execute_values(cursor, insert_query, values)
+        # On n'insère que les valeurs brutes dans la table intermédiaire
+        values_analysis = (
+            rfm[["customer_id", "recency", "frequency", "monetary"]]
+            .astype(object)
+            .values.tolist()
+        )
+        execute_values(cursor, insert_query, values_analysis)
         conn.commit()
 
+        # 6. EXPORT CSV POUR LE LOAD (Nouveau !)
+        csv_path = os.path.join(DATA_PROCESSED_PATH, "rfm_results.csv")
+        rfm.to_csv(csv_path, index=False)
+        print(f"💾 Sauvegarde du CSV réussie avec les scores : {csv_path}")
+
         cursor.close()
-        print(f"✅ Analyse RFM terminée : {len(rfm)} clients stockés.")
+        print(f"✅ Transformation RFM terminée avec succès !")
         return True
 
     except Exception as e:
@@ -108,7 +126,7 @@ def transform_rfm(truncate=True):
         traceback.print_exc()
         if conn:
             conn.rollback()
-        return False
+        raise e  # Fait remonter l'erreur pour qu'Airflow la détecte
     finally:
         if conn:
             conn.close()

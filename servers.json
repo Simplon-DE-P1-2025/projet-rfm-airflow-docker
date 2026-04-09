@@ -1,0 +1,13 @@
+{
+    "Servers": {
+        "1": {
+            "Name": "⚙️ Base de données RFM",
+            "Group": "Data Engineering",
+            "Host": "postgres",
+            "Port": 5432,
+            "MaintenanceDB": "rfm_db",
+            "Username": "rfm_user",
+            "SSLMode": "prefer"
+        }
+    }
+}
