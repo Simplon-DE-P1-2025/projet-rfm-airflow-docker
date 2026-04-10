@@ -67,7 +67,6 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
-    # Commande épurée : on ne fait que lancer le webserver
     command: bash -c "airflow webserver"
     healthcheck:
       test: [ "CMD", "curl", "-f", "http://localhost:8080/health" ]
@@ -106,7 +105,6 @@ services:
         condition: service_healthy
       airflow-init:
         condition: service_completed_successfully
-    # Commande épurée : on ne fait que lancer le scheduler
     command: bash -c "airflow scheduler"
 
   pgadmin:
